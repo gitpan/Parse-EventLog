@@ -3,12 +3,78 @@ package Parse::EventLog;
 require Exporter;
 @ISA     = qw(Exporter);
 @EXPORT  = qw(EVENT_INFORMATION EVENT_WARNING EVENT_ERROR EVENT_AUDIT_SUCCESS EVENT_AUDIT_FAILURE GetEventType);
-$VERSION = '0.5';
+$VERSION = '0.6';
 
 use warnings;
 use strict;
+use Encode;
 use constant { EVENT_ERROR => 1, EVENT_WARNING => 2, EVENT_INFORMATION => 4,
-               EVENT_AUDIT_SUCCESS => 8, EVENT_AUDIT_FAILURE => 16};
+               EVENT_AUDIT_SUCCESS => 8, EVENT_AUDIT_FAILURE => 16 };
+
+# Internal function for retrieving UTF-16LE strings from the string table.
+sub ShiftUTF16LEAsString($) {
+ my $str_ref = shift;
+ my $shifted = '';
+ my $two;
+ my $x = 0;
+ my $l = length($$str_ref);
+ while ($x < $l) {
+  $two = substr($$str_ref, $x, 2);
+  $x += 2;
+  if ($two eq "\0\0") {
+   $$str_ref = substr($$str_ref, $x);
+   return decode('UTF-16LE', $shifted);
+  } else {
+   $shifted .= $two;
+  }
+ }
+}
+
+# Internal function. See 'struct _SID' in WTypes.h for the SID binary format.
+sub ShiftSIDAsString($) {
+ my $str_ref = shift;
+ my $x = 0;                # Shift this much off of the input string.
+ my $revision;             # SID version.
+ my $sub_authorities;      # Sub authorities partly defines the size of the struct.
+ my @sid_id_auth;          # SID Identifier Authority as an array of bytes
+ my @sub_auths;            # An array of the actual sub authorities.
+ my $sid;                  # The final SID;
+
+ ($revision, $sub_authorities, @sid_id_auth) = unpack('CCCCCCCC', $$str_ref);
+
+ # Unpack all of the sub authorities into @sub_auths. 8 is the offset to the array.
+ @sub_auths = unpack("V[$sub_authorities]", substr($$str_ref, 8));
+
+ # Length of the above header, plus the length of one ULONG per sub authority.
+ $x = 8 + ($sub_authorities * 4);
+
+ $$str_ref = substr($$str_ref, $x);
+ $sid = "S-$revision-";
+
+ # The following code is taken from the Windows Platform SDK regarding, in
+ # "Converting a Binary SID to String Format".
+ if (($sid_id_auth[0] != 0) || ($sid_id_auth[1] != 0)) {
+        $sid .= sprintf('0x%02hx%02hx%02hx%02hx%02hx%02hx',
+                    $sid_id_auth[0],
+                    $sid_id_auth[1],
+                    $sid_id_auth[2],
+                    $sid_id_auth[3],
+                    $sid_id_auth[4],
+                    $sid_id_auth[5]);
+ } else {
+        $sid .= sprintf('%lu',
+                    $sid_id_auth[5]           +
+                    ($sid_id_auth[4] <<  8)   +
+                    ($sid_id_auth[3] << 16)   +
+                    ($sid_id_auth[2] << 24)   );
+ }
+
+ if (@sub_auths) { $sid .= '-'; }
+ local $" = '-';
+ $sid .= "@sub_auths";
+
+ return $sid;
+}
 
 =head1 NAME
 
@@ -55,7 +121,7 @@ succeed but getNextEvent will fail (there are no newer events).
 =cut
 
 sub new {
-	my $class = shift;
+  my $class = shift;
   my $filename = shift;
   my %events;
   my @events_by_time;
@@ -68,13 +134,9 @@ sub new {
   my $NumStrings;
   my $EventCategory;
   my $unused;
-  my $Source;
-  my $Computer;
-  my @bmsgs;
-  my $msgct;
 
  {
-  local $/; #$INPUT_RECORD_SEPARATOR;
+  local $/ = undef; #$INPUT_RECORD_SEPARATOR;
   my $filedata;
   my $file;
   open($file, $filename) or die "Unable to open file $filename";
@@ -104,28 +166,23 @@ sub new {
    $events{$RecordNumber}{'EventID'} = $EventID;
    $events{$RecordNumber}{'EventType'} = $EventType;
    $events{$RecordNumber}{'NumStrings'} = $NumStrings;
-   $events{$RecordNumber}{'Source'} = $Source;
-   $events{$RecordNumber}{'Computer'} = $Computer;
 
    # Strings are unicode and in a null terminated array. Split on double-null
-   # (a unicode null), and then remove nulls. Note: Replace with a real Unicode
-   # to ASCII function.
-   @bmsgs = split(/\0\0/, substr($rec, 48));  # Another magic number
-   $msgct = -2;
+   # (a unicode null), and then remove nulls. Note: Replaced with wcstombs.
 
-   foreach my $m (@bmsgs) {
-    $msgct++;
-    if ($msgct == -1) {
-     $Source = join('', split(/\0/, $m));
-    } elsif ($msgct == 0) {
-     $Computer = join('', split(/\0/, $m));
-     if ($NumStrings == 0) { last; }
-    } else {
-     push @{$events{$RecordNumber}{'Strings'}}, join('', split(/\0/, $m));
-     if ($msgct >= $NumStrings) { last; }
-    }
+   # Here, 48 is the offset from the start to the string table.
+   
+   my $stringtable = substr($rec, 48);
+
+   # Strings are encoded as UTF-16LE, so decode them here. Remember, when we
+   # split above, we truncated the last null character, so re-add it here.
+   $events{$RecordNumber}{'Source'} = ShiftUTF16LEAsString(\$stringtable);
+   $events{$RecordNumber}{'Computer'} = ShiftUTF16LEAsString(\$stringtable);
+   $events{$RecordNumber}{'SID'} = ShiftSIDAsString(\$stringtable);
+
+   for (my $msgct = 0; $msgct < $NumStrings; $msgct++) {
+    push @{$events{$RecordNumber}{'Strings'}}, ShiftUTF16LEAsString(\$stringtable);
    }
-
  }
 
  # Sort the events and store it in an array with the oldest being at
@@ -254,7 +311,7 @@ sub getAll {
 
 =head2 count
 
- my %event = $eventlog->count();
+ my $count = $eventlog->count();
 
 Returns the number of entries loaded from the event log.
 
@@ -354,6 +411,11 @@ Source of the event, usually the application or service name.
 
 The name of the computer that generated the event.
 
+=head2 SID
+
+The SID associated with the entry. It is unknown wheither this is the SID of the
+source PC, the PC the log was stored on, the user, or something else.
+
 =head2 NumStrings
 
 Number of strings in the event.
@@ -403,6 +465,12 @@ are for, please let me know.
 
 L<Win32::EventLog>
 
+=head1 THANKS
+
+Thanks to Malik of www.whitehats.ca for the initial data structure format that this
+module was based on. See: L<http://www.whitehats.ca/main/members/Malik/malik_eventlogs/malik_eventlogs.html>
+for more details and his origional work.
+
 =head1 COPYRIGHT
 
 Copyright 2005, John Eaglesham
@@ -410,3 +478,6 @@ Copyright 2005, John Eaglesham
 This module is free software. It may be used, redistributed and/or modified
 under the same terms as Perl itself.
 
+=cut
+
+1;

@@ -16,9 +16,9 @@ SYNOPSIS
      }
 
 DESCRIPTION
-    Parse::EventLog is a module designed to allow parsing of Windows 2000 Event Logs
-    on any platform. For better Event Log parsing on Windows platforms, see
-    Win32::EventLog.
+    Parse::EventLog is a module designed to allow parsing of Windows 2000
+    Event Logs on any platform. For better Event Log parsing on Windows
+    platforms, see Win32::EventLog.
 
     When instansiated with the location of an Event Log file, you will be
     able to walk through the existing events in chronological order from
@@ -82,7 +82,7 @@ METHODS
      }
 
   count
-     my %event = $eventlog->count();
+     my $count = $eventlog->count();
 
     Returns the number of entries loaded from the event log.
 
@@ -137,6 +137,11 @@ RETURN VALUES
   Computer
     The name of the computer that generated the event.
 
+  SID
+    The SID associated with the entry. It is unknown wheither this is the
+    SID of the source PC, the PC the log was stored on, the user, or
+    something else.
+
   NumStrings
     Number of strings in the event.
 
@@ -170,6 +175,12 @@ KNOWN BUGS
 
 SEE ALSO
     Win32::EventLog
+
+THANKS
+    Thanks to Malik of www.whitehats.ca for the initial data structure
+    format that this module was based on. See:
+    <http://www.whitehats.ca/main/members/Malik/malik_eventlogs/malik_eventl
+    ogs.html> for more details and his origional work.
 
 COPYRIGHT
     Copyright 2005, John Eaglesham
