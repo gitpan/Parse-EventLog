@@ -3,7 +3,7 @@ package Parse::EventLog;
 require Exporter;
 @ISA     = qw(Exporter);
 @EXPORT  = qw(EVENT_INFORMATION EVENT_WARNING EVENT_ERROR EVENT_AUDIT_SUCCESS EVENT_AUDIT_FAILURE GetEventType);
-$VERSION = '0.6';
+$VERSION = '0.7';
 
 use warnings;
 use strict;
@@ -97,9 +97,9 @@ sub ShiftSIDAsString($) {
 
 =head1 DESCRIPTION
 
-Parse::EventLog is a module designed to allow parsing of Windows 2000 Event Logs
-on any platform. For better Event Log parsing on Windows platforms, see
-Win32::EventLog.
+Parse::EventLog is a module designed to allow parsing of binary Windows 2000+ 
+Event Logs on any platform. For better Event Log parsing on Windows platforms,
+see Win32::EventLog.
 
 When instansiated with the location of an Event Log file, you will be able to
 walk through the existing events in chronological order from oldest to newest or
@@ -148,17 +148,19 @@ sub new {
  }
 
  foreach my $rec (@data) {
-  if (length($rec) < 92) {  # Magic number!
+  if (length($rec) < 92) {  # Magic number! Entry not long enough.
    next;
   }
 
   ($RecordNumber, $TimeGenerated, $TimeWritten,
    $EventID, $unused, $unused, $EventType, $unused,
-   $NumStrings) = unpack('VVVvccccvc', $rec); # More magic.
+   $NumStrings) = unpack('VVVvccccv', $rec); # More magic.
 
    if ($events{$RecordNumber}) {
     die "Error parsing event log, duplicate record number encountered ($RecordNumber)";
    }
+
+   my $sid_length = unpack('V', substr($rec, 32, 4));
 
    $events{$RecordNumber}{'TimeGenerated'} = $TimeGenerated;
    $events{$RecordNumber}{'TimeWritten'} = $TimeWritten;
@@ -178,7 +180,12 @@ sub new {
    # split above, we truncated the last null character, so re-add it here.
    $events{$RecordNumber}{'Source'} = ShiftUTF16LEAsString(\$stringtable);
    $events{$RecordNumber}{'Computer'} = ShiftUTF16LEAsString(\$stringtable);
-   $events{$RecordNumber}{'SID'} = ShiftSIDAsString(\$stringtable);
+   if ($sid_length) {
+    $events{$RecordNumber}{'SID'} = ShiftSIDAsString(\$stringtable);
+   } else {
+    $events{$RecordNumber}{'SID'} = undef;
+   }
+
 
    for (my $msgct = 0; $msgct < $NumStrings; $msgct++) {
     push @{$events{$RecordNumber}{'Strings'}}, ShiftUTF16LEAsString(\$stringtable);
@@ -192,7 +199,7 @@ sub new {
  } keys %events;
 
  my $self = {
-		'filename' => $filename,
+    'filename' => $filename,
     'events' => \%events,
     'events_by_time' => \@events_by_time,
     'lastindex' => 0,
@@ -413,7 +420,7 @@ The name of the computer that generated the event.
 
 =head2 SID
 
-The SID associated with the entry. It is unknown wheither this is the SID of the
+The SID associated with the entry. It is unknown whether this is the SID of the
 source PC, the PC the log was stored on, the user, or something else.
 
 =head2 NumStrings
@@ -461,6 +468,36 @@ are for, please let me know.
 
 =back
 
+=head1 CAVEATS
+
+While this module can extract general information on the events, most of the
+error description is stored in system libraries specific to the Windows version
+and patch level that created the log. At this time, Parse::EventLog does not
+have a facility to extract that data.
+
+Assume the Event Viewer shows the following event description:
+
+ The Print Spooler service was successfully sent a stop control.
+
+The data to build this description is stored in two locations. The first, a DLL
+file associated with the Service Control Manager, contains the string:
+
+ The %s service was successfully sent a %s control.
+
+The Event Log itself contains the strings:
+
+ Print Spooler
+ 
+and
+
+ stop
+
+Unfortunately, at this time Parse::EventLog is not able to extract the string
+data from files outside of the Event Log itself, only the strings contained
+within it. At this time, I recommend either parsing the events on the Windows
+server itself (via Win32::EventLog or a syslog plugin) or manually looking up
+the data elsewhere.
+
 =head1 SEE ALSO
 
 L<Win32::EventLog>
@@ -473,7 +510,7 @@ for more details and his origional work.
 
 =head1 COPYRIGHT
 
-Copyright 2005, John Eaglesham
+Copyright 2005-2006, John Eaglesham
 
 This module is free software. It may be used, redistributed and/or modified
 under the same terms as Perl itself.

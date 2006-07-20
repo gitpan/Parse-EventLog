@@ -16,9 +16,9 @@ SYNOPSIS
      }
 
 DESCRIPTION
-    Parse::EventLog is a module designed to allow parsing of Windows 2000
-    Event Logs on any platform. For better Event Log parsing on Windows
-    platforms, see Win32::EventLog.
+    Parse::EventLog is a module designed to allow parsing of binary Windows
+    2000+ Event Logs on any platform. For better Event Log parsing on
+    Windows platforms, see Win32::EventLog.
 
     When instansiated with the location of an Event Log file, you will be
     able to walk through the existing events in chronological order from
@@ -138,9 +138,9 @@ RETURN VALUES
     The name of the computer that generated the event.
 
   SID
-    The SID associated with the entry. It is unknown wheither this is the
-    SID of the source PC, the PC the log was stored on, the user, or
-    something else.
+    The SID associated with the entry. It is unknown whether this is the SID
+    of the source PC, the PC the log was stored on, the user, or something
+    else.
 
   NumStrings
     Number of strings in the event.
@@ -173,6 +173,36 @@ KNOWN BUGS
     fields in the log. These fields are currently ignored. If anyone knows
     what these fields are for, please let me know.
 
+CAVEATS
+    While this module can extract general information on the events, most of
+    the error description is stored in system libraries specific to the
+    Windows version and patch level that created the log. At this time,
+    Parse::EventLog does not have a facility to extract that data.
+
+    Assume the Event Viewer shows the following event description:
+
+     The Print Spooler service was successfully sent a stop control.
+
+    The data to build this description is stored in two locations. The
+    first, a DLL file associated with the Service Control Manager, contains
+    the string:
+
+     The %s service was successfully sent a %s control.
+
+    The Event Log itself contains the strings:
+
+     Print Spooler
+ 
+    and
+
+     stop
+
+    Unfortunately, at this time Parse::EventLog is not able to extract the
+    string data from files outside of the Event Log itself, only the strings
+    contained within it. At this time, I recommend either parsing the events
+    on the Windows server itself (via Win32::EventLog or a syslog plugin) or
+    manually looking up the data elsewhere.
+
 SEE ALSO
     Win32::EventLog
 
@@ -183,7 +213,7 @@ THANKS
     ogs.html> for more details and his origional work.
 
 COPYRIGHT
-    Copyright 2005, John Eaglesham
+    Copyright 2005-2006, John Eaglesham
 
     This module is free software. It may be used, redistributed and/or
     modified under the same terms as Perl itself.
